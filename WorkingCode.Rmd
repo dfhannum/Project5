@@ -1,0 +1,339 @@
+---
+title: "WorkingCode"
+author: "Douglas Hannum"
+date: "4/11/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(tidyr)
+library(lme4)
+library(dplyr)
+library(MuMIn)
+```
+
+#Data Setup
+
+Loading the data and getting rid of subject 16 because they had tons of missing data.  Also I am not using any observations that do not have a recorded ingress strategy.
+
+```{r loading data}
+# Loading data
+df <- read.csv('./data/merged_data.csv', header = T)
+# Getting rid of subject 16
+df <- df[df$Subject != 'S16',]
+# Making sure all observations have an ingress strategy
+df <- df[df$Ingress.Strategy != '',]
+dim(df)
+length(unique(df$Subject))
+```
+
+We now have 637 observations for 47 subjects.
+
+#Basic Plots of Ingress
+
+Looking at ingress time for different vehicles with subsets for group.  Another one looking at the ingress time by vehicle adjusting for vehicle order.
+```{r plot ingress}
+ggplot (df, aes(x = Vehicle.and.Door.Condition, y = IngressTime..s.,
+                     fill = Group)) +
+        geom_boxplot()
+
+df$Vehicle.Order <- as.factor(df$Vehicle.Order)
+ggplot (df, aes(x = Vehicle.and.Door.Condition, y = IngressTime..s.,
+                     fill = Vehicle.Order)) +
+        geom_boxplot()
+```
+
+#Summarizing Physical Measurements
+
+Creating three different summary statistics for one-leg balance.  Standardizeing both age and weight.  Separating the vehicle and door condition variable into two different variables.  
+
+```{r physical summaries}
+#colnames(df)
+df$first <- T
+for (i in 2:dim(df)[1]){
+        df$first[i] <- df$Subject[i] != df$Subject[i-1]
+}
+#summary(df$first)
+olb <- colnames(df)[49:54]
+#olb
+#summary(df[,c(olb)])
+#class(df[,49])
+df$olb_max <- NULL
+df$olb_mean_r <- NULL
+df$olb_mean_l <- NULL
+for (i in 1:dim(df)[1]){
+        df$olb_max[i] <- max(df[i,c(olb)])
+        df$olb_mean_l[i] <- mean(c(df$OLB_L1[i], df$OLB_L2[i], df$OLB_L3[i]),
+                                 na.rm = T)
+        df$olb_mean_r[i] <- mean(c(df$OLB_R1[i], df$OLB_R2[i], df$OLB_R3[i]),
+                                 na.rm = T)
+}
+#class(df$olb_max)
+olbs <- df[df$first == T,]
+df$olb_mean_sum <- df$olb_mean_l + df$olb_mean_r
+
+ggplot(data = df[df$first == T,], aes(x = olb_mean_sum)) +
+        geom_histogram(binwidth = 2) + 
+        geom_vline(xintercept = 15)
+df$OLB_Rating <- NA
+for (i in 1:dim(df)[1]){
+        if (is.na(df$olb_mean_sum[i])){
+                df$OLB_Rating[i] <- NA
+        }
+        else if (df$olb_mean_sum[i] == 60){
+                df$OLB_Rating[i] <- 3
+        }
+        else if (df$olb_mean_sum[i] > 15){
+                df$OLB_Rating[i] <- 2
+        }
+        else {
+                df$OLB_Rating[i] <- 1
+        }
+}
+df$OLB_Rating <- as.factor(df$OLB_Rating)
+
+df$Age <- df$Age..yrs..x
+#summary(df[df$first == T,]$Age)
+df$sd_age <- NA
+for (i in 1:dim(df)[1]){
+        df$sd_age[i] <- (df$Age[i] - 76.64) / 7
+}
+
+df <- separate(df, Vehicle.and.Door.Condition, 
+               into = c('Vehicle','Door Condition'), sep = '_')
+
+#summary(df[df$first == T,]$Weight.kg.)
+#sd(df[df$first == T,]$Weight.kg.)
+for (i in 1:dim(df)[1]){
+        df$sd_weight[i] <- (df$Weight.kg.[i] - 81.89) / 17.5
+}
+#summary(df[df$first == T,]$sd_weight)
+
+df$Gender <- df$Gender.x
+```
+
+# Looking at the Ingress Strategy
+
+Want to see if people are switching strategy throughout the study.
+
+```{r ingress strategy}
+subj <- unique(as.character(df$Subject))
+ingress_df <- matrix(nrow = length(subj), ncol = 2)
+rownames(ingress_df) <- subj
+colnames(ingress_df) <- c('Normal','Two_Feet')
+w <- 1
+for (i in subj){
+        subj_df <- df[df$Subject == i,]
+        p <- summary(subj_df$Ingress.Strategy)
+        ingress_df[w,] <- p[c(2,3)]
+        w <- w + 1
+}
+#ingress_df
+```
+Six people were about half and half in strategy (5x 8-6, 1x 6-7) and one person who was a 3-11.  For the most part subjects stayed consistent with their ingress strategy.
+
+```{r ingress time distribution}
+ggplot(data =df, aes(x = IngressTime..s.)) + geom_histogram() +
+        ggtitle('Distribution of Ingress Time') +
+        ylab ('Counts') + xlab('Ingress Time (s)') + theme_bw() +
+        theme(plot.title = element_text(hjust = 0.5))
+# ggsave('./images/ingress_plot.png', device = 'png', width = 7, height = 4,
+#        units = 'in')
+```
+
+#Boxplot Images
+
+Creating some boxplot images to visualize differences
+
+```{r boxplot setup}
+df2 <- df
+df2$Group <- as.character(df2$Group)
+for (i in 1:dim(df2)[1]){
+        if ((df2$Group[i]) == 'Neuropathy'){
+                df2$Group[i] <- ('PN')
+        }
+}
+df2$Group <- as.factor(df2$Group)
+#summary(df2$Group)
+
+for (i in 1:dim(df2)[1]){
+        if (!is.na(df2$`Door Condition`[i])){
+                if(df2$`Door Condition`[i] == 'Pklt'){
+                        df2$`Door Condition`[i] <- 'Partially Open'
+                }
+        }
+}
+
+
+colnames(df2)[36] <- 'Ingress Strategy'
+df2$`Ingress Strategy` <- as.character(df2$`Ingress Strategy`)
+for (i in 1:dim(df2)[1]){
+        if (df2$`Ingress Strategy`[i] == 'twofeet'){
+                df2$`Ingress Strategy`[i] <- 'Two Feet'
+        }
+        else if (df2$`Ingress Strategy`[i] == 'normal'){
+                df2$`Ingress Strategy`[i] <- 'Normal'
+        }
+}
+```
+
+```{r boxplots}
+ggplot (df2, aes(x = Vehicle, y = IngressTime..s.,, fill = `Door Condition`)) +
+        geom_boxplot () + theme_bw() +
+        ylab('Ingress Time (s)') + xlab ('Vehicle') + 
+        ggtitle('Ingress Time for Each Vehicle', subtitle = 'Split by Door Condition') +
+        theme(plot.title = element_text(hjust = 0.5), 
+              plot.subtitle = element_text(hjust = 0.5)) +
+        scale_fill_discrete(name = "Door Condition")
+
+# ggsave('./images/IngressByVehicleByDoorStatus.png', device = 'png', 
+#        height = 4, width = 7, units = 'in')
+
+ggplot (df2, aes(x = Vehicle, y = IngressTime..s.,
+                     fill = Group)) +
+        geom_boxplot() + theme_bw() +
+        ylab ('Ingress Time (s)') + xlab ('Vehicle') +
+        ggtitle ('Ingress Time for Each Vehicle', subtitle = 'Split by Group') +
+        theme(plot.title = element_text(hjust = 0.5), 
+              plot.subtitle = element_text(hjust = 0.5))
+
+# ggsave('./images/IngressByVehicleByGroup.png',device = 'png', height = 4,
+#        width = 7, units = 'in')
+
+ggplot (df2[df2$`Ingress Strategy` != '',], aes(x = Vehicle, y = IngressTime..s., 
+                                               fill = `Ingress Strategy`)) +
+        geom_boxplot() + theme_bw() + ylab ('Ingress Time (s)') +
+        xlab ('Vehicle') + 
+        ggtitle ('Ingress Time for Each Vehicle', subtitle = 'Split by Strategy') +
+        theme(plot.title = element_text(hjust = 0.5), 
+              plot.subtitle = element_text(hjust = 0.5)) +
+        scale_fill_discrete(name = "Ingress Strategy")
+
+# ggsave('./images/IngressByVehicleByStrategy.png', device = 'png', height = 4,
+#        width = 7, units = 'in')
+```
+
+#Creating Table for Univariate ME Models
+
+```{r}
+df3 <- df2
+mo1 <- lmer(data = df3, IngressTime..s. ~ (1|Subject) + `Ingress Strategy`)
+mo2 <- lmer(data = df3, IngressTime..s. ~ (1|Subject) + Group)
+mo3 <- lmer(data = df3, IngressTime..s. ~ (1|Subject) + OLB_Rating)
+
+tbl1 <- matrix(ncol = 3)
+tbl1 <- rbind(tbl1,summary(mo1)$coefficients)
+tbl1 <- rbind(tbl1,summary(mo2)$coefficients)
+tbl1 <- rbind(tbl1,summary(mo3)$coefficients)
+tbl1 <- tbl1[-1,]
+tbl1 <- as.data.frame(tbl1)
+tbl1$lb <- tbl1$Estimate - 1.96* tbl1$`Std. Error`
+tbl1$ub <- tbl1$Estimate + 1.96* tbl1$`Std. Error`
+tbl1$CI <- paste0('(', round(tbl1$lb,2), ', ', round(tbl1$ub,2), ')')
+
+# write.csv(tbl1, './tables/Ingress_naive_model.csv', quote = F, row.names = F)
+```
+
+We see that ingress strategy is a significant covariate when determining ingress time.
+
+#An Adjusted Model
+
+Adjusting for multiple variables and using random effects for both subject and vehicle.  Then getting confidence intervals and outputting a table.
+```{r adj model}
+mod1 <- lmer(data = df2, IngressTime..s. ~ (1|Subject) + (1|Vehicle) +
+        `Ingress Strategy` + `Door Condition` + Gender + sd_weight +
+        sd_age + OLB_Rating + Group)
+
+tbl2 <- as.data.frame(summary(mod1)$coefficients)
+tbl2$CI <- paste0('(', round(tbl2$Estimate - 1.96*tbl2$`Std. Error`,2), ', ',
+                  round(tbl2$Estimate + 1.96*tbl2$`Std. Error`, 2), ')')
+tbl2$lb <- tbl2$Estimate - 1.96* tbl2$`Std. Error`
+tbl2$ub <- tbl2$Estimate + 1.96* tbl2$`Std. Error`
+tbl2$CI <- paste0('(', round(tbl2$lb,2), ', ', round(tbl2$ub,2), ')')
+tbl2
+# write.csv(tbl2,'./tables/ingress_adj_model.csv', quote = F, row.names = F)
+```
+Ingress strategy, door condition, standardized weight and standardized age are significant.
+
+
+Looking at the model residuals
+
+```{r mod residuals}
+res <- summary(mod1)$residuals
+plot(res)
+rdf <- as.data.frame(res)
+ggplot(data = rdf, aes (x = rdf[,1])) + geom_histogram(bins = 7)
+```
+
+I think they look pretty good, but I did not test further.
+
+
+#Aim2
+
+Getting minimums, means and maximums for all the physical variables.
+
+```{r summarizing all variables}
+df3 <- df2
+
+df3 <- df3[,c(1,34,43,44,56:83)]
+df3$Grip_r_mean <- rowMeans(df3[,5:7], na.rm = T)
+df3$GriplefthanMean <- rowMeans(df3[,8:10], na.rm = T)
+df3$GripMean <- rowMeans(df3[,5:10], na.rm = T)
+df3$KneeExtensionMean <- rowMeans(df3[,13:15], na.rm = T)
+df3$HipAbductionMean <- rowMeans(df3[,16:18], na.rm = T)
+df3$HipRotMean <- rowMeans(df3[,19:21], na.rm = T)
+
+df3$GriprighthandMax <- apply(df3[,5:7], 1, max)
+df3$GriplefthanMax <- apply(df3[,8:10], 1, max)
+df3$GripMax <- apply(df3[,5:10], 1, max)
+df3$KneeExtensionMax <- apply(df3[,13:15], 1, max)
+df3$HipAbductionMax <- apply(df3[,16:18], 1, max)
+df3$HipRotationMax <- apply(df3[,19:21], 1, max)
+
+df3$GriprighthandMin <- apply(df3[,5:7], 1, min)
+df3$GriplefthanMin <- apply(df3[,8:10], 1, min)
+df3$GripMin <- apply(df3[,5:10], 1, min)
+df3$KneeExtensionMin <- apply(df3[,13:15], 1, min)
+df3$HipAbductionMin <- apply(df3[,16:18], 1, min)
+df3$HipRotationMin <- apply(df3[,19:21], 1, min)
+```
+
+Creating an Aim2 plot
+
+Running univariate models adjusting for subject (random effect), then getting an r-squared value for each variable.  Then plotting it.  Tested all the variables.  Only used one statistic per variable, which was the one which described the most variation.
+
+```{r aim2 plot}
+variables <- names(df3)[-c(1,2, 5:10, 13:21)]
+table <- matrix(ncol = 2, nrow = length(variables))
+rownames(table) <- variables
+colnames(table) <- c('R2m','R2c')
+for (i in (variables)){
+        form <- paste0('(IngressTime..s.) ~ (1|Subject) + `', i, '`')
+        mod <- lmer(data = df3, form)
+        table[i,c(1,2)] <- r.squaredGLMM(mod)[c(1,2)]
+}
+tbl <- as.data.frame(table)
+
+tbl$Variables <- variables
+tbl <- tbl[order(tbl$R2m,decreasing = T),]
+tbl$`Variance Explained` <- round(tbl$R2m *100,2)
+tbl_plot <- tbl[c(1,3,4,6,8,9,10,11,12,13,14),]
+tbl_plot$Variables <- c('OLB Rating', 'Group','MDNS','Off Accuracy', 'Age',
+                        'Accuracy','RRT', 'Knee Extension Max',
+                        'Hip Abduction Mean','MMSE', 'SRT')
+ggplot(data = tbl_plot, aes(x = reorder(Variables, `Variance Explained`), 
+                            y = `Variance Explained`)) +
+        geom_bar(stat = 'identity') + coord_flip() + xlab('Variable') + 
+        ylab('% of Variance Explained') +
+        ggtitle('Ingress Time Variance Explained', 
+                subtitle =  'by Variables, adjusted for Subject') +
+        theme_bw() +
+        theme(plot.title = element_text(hjust = 0.5), 
+              plot.subtitle = element_text(hjust = 0.5))
+
+# ggsave('./images/Ingress_Aim2Plot.png', device = 'png', height = 4,
+#        width = 7, units = 'in')
+```
+
